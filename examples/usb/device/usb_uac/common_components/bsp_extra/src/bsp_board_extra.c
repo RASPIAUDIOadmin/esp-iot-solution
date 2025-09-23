@@ -5,8 +5,7 @@
  */
 
 #include <stdint.h>
-#include <stdbool.h>
-
+#include <stdbool.h>\r\n#include "sdkconfig.h"\r\n
 #include "esp_log.h"
 #include "esp_check.h"\r\n#include "esp_err.h"
 
@@ -132,6 +131,20 @@ esp_err_t bsp_extra_i2s_write(void *audio_buffer, size_t len, size_t *bytes_writ
     ESP_RETURN_ON_ERROR(ensure_codec_handles(), TAG, "codec init");
     ESP_RETURN_ON_FALSE(play_dev_handle != NULL, ESP_ERR_INVALID_STATE, TAG, "playback handle unavailable");
 
+    #if CONFIG_UAC_SPEAKER_CHANNEL_NUM == 2
+    const size_t frame_size_bytes = CONFIG_UAC_SPEAKER_CHANNEL_NUM * sizeof(int16_t);
+    if (len >= frame_size_bytes && (len % frame_size_bytes) == 0) {
+        int16_t *samples = (int16_t *)audio_buffer;
+        size_t frames = len / frame_size_bytes;
+        for (size_t frame = 0; frame < frames; ++frame) {
+            int16_t left = samples[frame * 2 + 0];
+            int16_t right = samples[frame * 2 + 1];
+            int32_t mono = ((int32_t)left + (int32_t)right) / 2;
+            samples[frame * 2 + 0] = (int16_t)mono;
+            samples[frame * 2 + 1] = (int16_t)(-mono);
+        }
+    }
+    #endif
     esp_err_t ret = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
     if (bytes_written) {
         *bytes_written = (ret == ESP_OK) ? len : 0;
@@ -225,6 +238,7 @@ esp_err_t bsp_extra_player_init(char *path)
 
     return ESP_OK;
 }
+
 
 
 
