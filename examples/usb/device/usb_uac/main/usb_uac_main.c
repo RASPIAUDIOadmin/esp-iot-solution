@@ -44,6 +44,9 @@ static void uac_device_set_volume_cb(uint32_t volume, void *arg)
 
 void app_main(void)
 {
+    esp_log_level_set("usbd_uac", ESP_LOG_DEBUG);
+    esp_log_level_set("tusb", ESP_LOG_DEBUG);
+    esp_log_level_set("bt_ampl", ESP_LOG_VERBOSE);
     bsp_extra_codec_init();
     bsp_extra_codec_set_fs(CONFIG_UAC_SAMPLE_RATE, 16, CONFIG_UAC_SPEAKER_CHANNEL_NUM);
 
@@ -57,4 +60,6 @@ void app_main(void)
 
     uac_device_init(&config);
 }
+
+
 

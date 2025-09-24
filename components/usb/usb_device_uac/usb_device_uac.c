@@ -389,6 +389,13 @@ bool tud_audio_rx_done_post_read_cb(uint8_t rhport, uint16_t n_bytes_received, u
     last_time = now;
 
     int bytes_remained = tud_audio_available();
+    int total_remained = bytes_remained + s_uac_device->spk_data_size;
+    ESP_LOGV(TAG, "RX done: recvd=%u remained=%d data=%d new_play=%d", (unsigned)n_bytes_received, bytes_remained, s_uac_device->spk_data_size, new_play);
+    if (total_remained < (int)s_uac_device->spk_bytes_per_ms) {
+        ESP_LOGW(TAG, "SPK underrun risk: remained=%d req=%d", total_remained, (int)s_uac_device->spk_bytes_per_ms);
+    } else if (total_remained > (int)(3 * s_uac_device->spk_bytes_per_ms)) {
+        ESP_LOGD(TAG, "SPK backlog: remained=%d (~%d ms)", total_remained, total_remained / (int)s_uac_device->spk_bytes_per_ms);
+    }
 
     size_t bytes_require = s_uac_device->spk_bytes_per_ms;
 
@@ -441,11 +448,14 @@ static void usb_spk_task(void *pvParam)
         }
         // clear the notification
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        ESP_LOGV(TAG, "SPK task woke: active=%d size=%d", s_uac_device->spk_active, (int)s_uac_device->spk_data_size);
         if (s_uac_device->spk_data_size == 0) {
+            ESP_LOGV(TAG, "SPK notified but no data (fifo %d)", tud_audio_available());
             continue;
         }
         // playback the data from the ring buffer chunk by chunk
         if (s_uac_device->user_cfg.output_cb) {
+        ESP_LOGV(TAG, "SPK output %d bytes (fifo %d)", (int)s_uac_device->spk_data_size, tud_audio_available());
             s_uac_device->user_cfg.output_cb((uint8_t *)s_uac_device->spk_buf, s_uac_device->spk_data_size, s_uac_device->user_cfg.cb_ctx);
         }
         s_uac_device->spk_data_size = 0;

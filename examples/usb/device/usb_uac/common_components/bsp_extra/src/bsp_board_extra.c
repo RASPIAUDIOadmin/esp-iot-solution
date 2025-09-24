@@ -5,9 +5,14 @@
  */
 
 #include <stdint.h>
-#include <stdbool.h>\r\n#include "sdkconfig.h"\r\n
+#include <stdbool.h>
+#include <stdlib.h>
+#include <limits.h>
+
+#include "sdkconfig.h"
 #include "esp_log.h"
-#include "esp_check.h"\r\n#include "esp_err.h"
+#include "esp_check.h"
+#include "esp_err.h"
 
 #include "audio_player.h"
 #include "bsp/esp-bsp.h"
@@ -37,10 +42,11 @@ static esp_err_t codec_close_if_open(esp_codec_dev_handle_t handle)
 
 static esp_err_t codec_open_with_fs(esp_codec_dev_handle_t handle, const esp_codec_dev_sample_info_t *fs)
 {
-    if (!handle) {
+    if (!handle || fs == NULL) {
         return ESP_OK;
     }
-    esp_err_t err = esp_codec_dev_open(handle, fs);
+    esp_codec_dev_sample_info_t local = *fs;
+    esp_err_t err = esp_codec_dev_open(handle, &local);
     return (err == ESP_ERR_INVALID_STATE) ? ESP_OK : err;
 }
 
@@ -131,26 +137,27 @@ esp_err_t bsp_extra_i2s_write(void *audio_buffer, size_t len, size_t *bytes_writ
     ESP_RETURN_ON_ERROR(ensure_codec_handles(), TAG, "codec init");
     ESP_RETURN_ON_FALSE(play_dev_handle != NULL, ESP_ERR_INVALID_STATE, TAG, "playback handle unavailable");
 
-    #if CONFIG_UAC_SPEAKER_CHANNEL_NUM == 2
+#if CONFIG_UAC_SPEAKER_CHANNEL_NUM == 2
     const size_t frame_size_bytes = CONFIG_UAC_SPEAKER_CHANNEL_NUM * sizeof(int16_t);
     if (len >= frame_size_bytes && (len % frame_size_bytes) == 0) {
         int16_t *samples = (int16_t *)audio_buffer;
         size_t frames = len / frame_size_bytes;
         for (size_t frame = 0; frame < frames; ++frame) {
-            int16_t left = samples[frame * 2 + 0];
-            int16_t right = samples[frame * 2 + 1];
-            int32_t mono = ((int32_t)left + (int32_t)right) / 2;
-            samples[frame * 2 + 0] = (int16_t)mono;
+            int16_t mono = samples[frame * 2 + 0];
+            ESP_LOGV("bt_ampl", "frame %zu: L=%d R=%d -> mono=%d", frame, samples[frame * 2 + 0], samples[frame * 2 + 1], mono);
+            samples[frame * 2 + 0] = mono;
             samples[frame * 2 + 1] = (int16_t)(-mono);
         }
     }
-    #endif
+#endif
+
     esp_err_t ret = esp_codec_dev_write(play_dev_handle, audio_buffer, len);
     if (bytes_written) {
         *bytes_written = (ret == ESP_OK) ? len : 0;
     }
     return ret;
 }
+
 
 esp_err_t bsp_extra_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch)
 {
