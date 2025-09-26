@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "freertos/FreeRTOS.h"
 #include "esp_check.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -26,6 +27,18 @@ static const char *TAG = "bsp_szpi";
 
 #define SZPI_ES7210_ADDR    (0x82)
 
+#define PCA9557_REG_INPUT0   (0x00)
+#define PCA9557_REG_OUTPUT0  (0x01)
+#define PCA9557_REG_CONFIG0  (0x03)
+#define PCA9557_IO_TIMEOUT_TICKS  pdMS_TO_TICKS(100)
+
+static bool pca9557_initialized;
+static uint8_t pca9557_output_state;
+
+static esp_err_t ensure_i2c_bus(void);
+static esp_err_t ensure_pca9557(void);
+static esp_err_t pca9557_set_pa(bool enable);
+
 static bool i2c_initialized;
 static const audio_codec_data_if_t *i2s_data_if;
 static i2s_chan_handle_t i2s_tx_chan;
@@ -40,16 +53,17 @@ static const audio_codec_ctrl_if_t *es7210_ctrl_if;
 
 static esp_err_t ensure_pa_gpio(void)
 {
-    if (BSP_POWER_AMP_IO == GPIO_NUM_NC) {
-        return ESP_OK;
-    }
-
+#if (BSP_POWER_AMP_GPIO_NUM < 0)
+    ESP_RETURN_ON_ERROR(ensure_pca9557(), TAG, "init PA expander");
+    pa_gpio_configured = true;
+    return ESP_OK;
+#else
     if (pa_gpio_configured) {
         return ESP_OK;
     }
 
     gpio_config_t cfg = {
-        .pin_bit_mask = 1ULL << BSP_POWER_AMP_IO,
+        .pin_bit_mask = 1ULL << BSP_POWER_AMP_GPIO_NUM,
         .mode = GPIO_MODE_OUTPUT,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .pull_up_en = GPIO_PULLUP_DISABLE,
@@ -59,6 +73,7 @@ static esp_err_t ensure_pa_gpio(void)
     ESP_RETURN_ON_ERROR(gpio_set_level(BSP_POWER_AMP_IO, 0), TAG, "default PA low");
     pa_gpio_configured = true;
     return ESP_OK;
+#endif
 }
 
 static esp_err_t ensure_i2c_bus(void)
@@ -83,14 +98,68 @@ static esp_err_t ensure_i2c_bus(void)
     return ESP_OK;
 }
 
-esp_err_t bsp_audio_poweramp_enable(bool enable)
+static inline uint8_t pca9557_addr_7bit(void)
 {
-    if (BSP_POWER_AMP_IO == GPIO_NUM_NC) {
-        ESP_LOGD(TAG, "No discrete PA control");
+    return (BSP_PCA9557_ADDR > 0x7F) ? (BSP_PCA9557_ADDR >> 1) : BSP_PCA9557_ADDR;
+}
+
+static esp_err_t pca9557_write_reg(uint8_t reg, uint8_t value)
+{
+    uint8_t payload[2] = {reg, value};
+    return i2c_master_write_to_device(BSP_I2C_NUM, pca9557_addr_7bit(), payload, sizeof(payload), PCA9557_IO_TIMEOUT_TICKS);
+}
+
+static esp_err_t pca9557_read_reg(uint8_t reg, uint8_t *value)
+{
+    return i2c_master_write_read_device(BSP_I2C_NUM, pca9557_addr_7bit(), &reg, sizeof(reg), value, 1, PCA9557_IO_TIMEOUT_TICKS);
+}
+
+static esp_err_t ensure_pca9557(void)
+{
+    ESP_RETURN_ON_ERROR(ensure_i2c_bus(), TAG, "init I2C bus for PCA9557");
+
+    if (pca9557_initialized) {
         return ESP_OK;
     }
 
-    ESP_RETURN_ON_ERROR(ensure_pa_gpio(), TAG, "init PA GPIO");
+    uint8_t config0 = 0xFF;
+    if (pca9557_read_reg(PCA9557_REG_CONFIG0, &config0) != ESP_OK) {
+        config0 = 0xFF;
+    }
+    config0 &= (uint8_t)~(1U << BSP_PCA9557_PA_BIT);
+    ESP_RETURN_ON_ERROR(pca9557_write_reg(PCA9557_REG_CONFIG0, config0), TAG, "set PCA9557 config");
+
+    if (pca9557_read_reg(PCA9557_REG_OUTPUT0, &pca9557_output_state) != ESP_OK) {
+        pca9557_output_state = 0;
+    }
+    pca9557_output_state &= (uint8_t)~(1U << BSP_PCA9557_PA_BIT);
+    ESP_RETURN_ON_ERROR(pca9557_write_reg(PCA9557_REG_OUTPUT0, pca9557_output_state), TAG, "default PA off");
+
+    pca9557_initialized = true;
+    return ESP_OK;
+}
+
+static esp_err_t pca9557_set_pa(bool enable)
+{
+    ESP_RETURN_ON_ERROR(ensure_pca9557(), TAG, "ensure PCA9557 ready");
+
+    if (enable) {
+        pca9557_output_state |= (uint8_t)(1U << BSP_PCA9557_PA_BIT);
+    } else {
+        pca9557_output_state &= (uint8_t)~(1U << BSP_PCA9557_PA_BIT);
+    }
+    ESP_RETURN_ON_ERROR(pca9557_write_reg(PCA9557_REG_OUTPUT0, pca9557_output_state), TAG, "update PA state");
+    return ESP_OK;
+}
+
+esp_err_t bsp_audio_poweramp_enable(bool enable)
+{
+    ESP_RETURN_ON_ERROR(ensure_pa_gpio(), TAG, "init PA control");
+
+    if (BSP_POWER_AMP_GPIO_NUM < 0) {
+        return pca9557_set_pa(enable);
+    }
+
     return gpio_set_level(BSP_POWER_AMP_IO, enable ? 1 : 0);
 }
 
@@ -223,7 +292,7 @@ static esp_codec_dev_handle_t create_speaker_codec(void)
     es8311_codec_cfg_t es8311_cfg = {
         .ctrl_if = es8311_ctrl_if,
         .gpio_if = gpio_if,
-        .codec_mode = ESP_CODEC_DEV_TYPE_OUT,
+        .codec_mode = ESP_CODEC_DEV_WORK_MODE_DAC,
         .pa_pin = BSP_POWER_AMP_IO,
         .pa_reverted = false,
         .master_mode = false,
@@ -319,8 +388,6 @@ esp_err_t bsp_audio_codec_configure_inputs(void)
     ESP_LOGI(TAG, "ES7210 inputs configured (MIC1 + MIC2)");
     return ESP_OK;
 }
-
-
 
 
 

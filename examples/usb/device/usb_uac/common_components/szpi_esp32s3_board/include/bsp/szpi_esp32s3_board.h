@@ -17,7 +17,7 @@ extern "C" {
 #endif
 
 /* I2C configuration */
-#define BSP_I2C_NUM          (0)
+#define BSP_I2C_NUM          (1)
 #define BSP_I2C_SCL          (GPIO_NUM_2)
 #define BSP_I2C_SDA          (GPIO_NUM_1)
 
@@ -29,8 +29,11 @@ extern "C" {
 #define BSP_I2S_DOUT         (GPIO_NUM_45)
 #define BSP_I2S_DIN          (GPIO_NUM_12)
 
-/* Power amplifier control (not present -> use no-connect) */
-#define BSP_POWER_AMP_IO     (GPIO_NUM_NC)
+/* Power amplifier control via PCA9557 IO expander */
+#define BSP_PCA9557_ADDR     (0x19)   /* 7-bit default address, override if board differs */
+#define BSP_PCA9557_PA_BIT   (1)      /* PCA9557 port bit driving PA enable */
+#define BSP_POWER_AMP_GPIO_NUM   (-1)
+#define BSP_POWER_AMP_IO     ((gpio_num_t)BSP_POWER_AMP_GPIO_NUM)
 
 esp_err_t bsp_audio_init(const i2s_std_config_t *i2s_config);
 
@@ -45,5 +48,6 @@ esp_err_t bsp_audio_codec_configure_inputs(void);
 #ifdef __cplusplus
 }
 #endif
+
 
 
