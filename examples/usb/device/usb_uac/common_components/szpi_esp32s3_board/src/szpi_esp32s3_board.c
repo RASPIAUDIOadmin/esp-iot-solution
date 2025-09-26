@@ -344,7 +344,7 @@ static esp_codec_dev_handle_t create_microphone_codec(void)
     es7210_codec_cfg_t es7210_cfg = {
         .ctrl_if = es7210_ctrl_if,
         .master_mode = false,
-        .mic_selected = ES7120_SEL_MIC1 | ES7120_SEL_MIC2,
+        .mic_selected = ES7120_SEL_MIC1 | ES7120_SEL_MIC3, /* MIC1: user mic, MIC3: speaker reference loopback */
         .mclk_src = ES7210_MCLK_FROM_PAD,
         .mclk_div = 256,
     };
